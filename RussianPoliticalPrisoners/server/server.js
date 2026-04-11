@@ -16,15 +16,35 @@ app.get('/api/map', async (req, res) => {
       'https://api.prisonerwatch.org/api/analytics/map-data?source=ovd_api_optimized',
       {
         headers: {
-          Authorization: `Bearer ${process.env.API_KEY}`
-        }
+          Authorization: `Bearer ${process.env.API_KEY}`,
+          Accept: 'application/json'
+        },
+        responseType: 'stream',
+        timeout: 20000
       }
     )
 
-    res.json(response.data)
+    res.setHeader(
+      'Content-Type',
+      response.headers['content-type'] || 'application/json'
+    )
+
+    response.data.pipe(res)
+
+    response.data.on('error', (err) => {
+      console.error('MAP STREAM ERROR:', err.message)
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Stream failed' })
+      } else {
+        res.end()
+      }
+    })
   } catch (error) {
-    console.error('MAP ERROR:', error.response?.status, error.response?.data || error.message)
-    res.status(500).json({ error: 'Failed to fetch map data' })
+    console.error('MAP ERROR:', error.message)
+
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch map data'
+    })
   }
 })
 
