@@ -25,7 +25,7 @@ document.querySelector('#app').innerHTML = `
     <section class="details-panel">
       <h2>Case Details</h2>
       <div id="detailsContent" class="details-content">
-        Click “Load Map Data,” then click a dot and choose “See full details.”
+        Click “Load Map Data,” then select a location to view its cases.
       </div>
     </section>
   </div>
@@ -95,7 +95,67 @@ async function loadMapData() {
   }
 }
 
-//render markers
+//group prisoners by coordinates
+function groupPointsByLocation(points) {
+  const groups = new Map()
+
+  points.forEach((point) => {
+    //validate coordinates
+    if (!point?.coordinates) return
+
+    const lat = point.coordinates.lat
+    const lng = point.coordinates.lng
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+
+    //use coordinates as a unique location key
+    const key = `${lat},${lng}`
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        lat: lat,
+        lng: lng,
+        location: point.location || 'Unknown location',
+        people: []
+      })
+    }
+
+    groups.get(key).people.push(point)
+  })
+
+  return Array.from(groups.values())
+}
+
+//create numbered marker
+function createCountMarker(count) {
+  const size = count >= 100 ? 46 : count >= 10 ? 38 : 32
+
+  return L.divIcon({
+    className: 'count-marker-wrapper',
+    html: `
+      <div style="
+        width: ${size}px;
+        height: ${size}px;
+        background: #e21d36;
+        border: 2px solid #ff7180;
+        border-radius: 50%;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: bold;
+        font-size: 13px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      ">
+        ${count}
+      </div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2]
+  })
+}
+
+//render grouped markers
 function renderMarkers() {
   markerLayer.clearLayers()
 
@@ -105,41 +165,30 @@ function renderMarkers() {
     return
   }
 
-  let visibleCount = 0
+  //group all points by location
+  const locations = groupPointsByLocation(allPoints)
 
-  allPoints.forEach((point) => {
-    //validate coordinates
-    if (!point?.coordinates) return
-    if (!Number.isFinite(point.coordinates.lat) ||
-        !Number.isFinite(point.coordinates.lng)) return
+  locations.forEach((location) => {
+    const count = location.people.length
 
-    const lat = point.coordinates.lat
-    const lng = point.coordinates.lng
+    //create numbered marker
+    const marker = L.marker(
+      [location.lat, location.lng],
+      {
+        icon: createCountMarker(count)
+      }
+    )
 
-    //all markers use the same color
-    const markerColor = 'red'
-
-    //sanitize values
-    const safeName = escapeHtml(point.name || 'Unknown')
-    const safeLocation = escapeHtml(point.location || 'Unknown location')
-    const safeId = escapeHtml(String(point.id || ''))
-
-    //create marker
-    const marker = L.circleMarker([lat, lng], {
-      radius: 7,
-      color: markerColor,
-      fillColor: markerColor,
-      fillOpacity: 0.9,
-      weight: 1.5
-    })
+    //sanitize location
+    const safeLocation = escapeHtml(location.location)
 
     //popup content
     marker.bindPopup(`
       <div class="popup-card">
-        <strong>${safeName}</strong><br>
-        ${safeLocation}<br>
-        <button class="popup-details-btn" data-prisoner-id="${safeId}" type="button">
-          See full details
+        <strong>${safeLocation}</strong><br>
+        ${count} ${count === 1 ? 'case' : 'cases'}<br>
+        <button class="popup-details-btn" type="button">
+          View cases
         </button>
       </div>
     `)
@@ -152,11 +201,11 @@ function renderMarkers() {
       const button = popupElement.querySelector('.popup-details-btn')
       if (!button) return
 
-      button.addEventListener('click', async (e) => {
+      button.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
 
-        await loadPrisonerDetails(point.id)
+        showLocationCases(location)
 
         //scroll to details section
         const detailsSection = document.querySelector('.details-panel')
@@ -170,16 +219,78 @@ function renderMarkers() {
     })
 
     markerLayer.addLayer(marker)
-    visibleCount += 1
   })
 
   //update visible count
+  const totalCases = locations.reduce(
+    (sum, location) => sum + location.people.length,
+    0
+  )
+
   detailsContent.innerHTML = `
-    <p>${visibleCount} dots currently visible.
-    Click a dot, then click <strong>See full details</strong>.</p>
-    <p>Map positions are approximate city or regional reference points,
+    <p>${totalCases} cases displayed across
+    ${locations.length} map locations.</p>
+    <p>Click a numbered marker to view the cases at that location.</p>
+    <p>Locations are approximate city or regional reference points,
     not confirmed prisoner locations.</p>
   `
+}
+
+//show all cases associated with a location
+function showLocationCases(location) {
+  const people = [...location.people].sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '')
+  )
+
+  //render scrollable list
+  detailsContent.innerHTML = `
+    <div class="person-card">
+      <h3>${escapeHtml(location.location)}</h3>
+      <p>${people.length} ${people.length === 1 ? 'case' : 'cases'}</p>
+
+      <div class="location-case-list" style="
+        max-height: 450px;
+        overflow-y: auto;
+        margin-top: 15px;
+      ">
+        ${people.map((person, index) => `
+          <div class="detail-card" style="margin-bottom: 8px;">
+            <button
+              class="case-select-btn"
+              data-index="${index}"
+              type="button"
+              style="
+                width: 100%;
+                text-align: left;
+                cursor: pointer;
+                color: inherit;
+                background: transparent;
+                border: none;
+                font: inherit;
+                padding: 8px;
+              "
+            >
+              ${escapeHtml(person.name || 'Unknown')}
+            </button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `
+
+  //handle individual case selection
+  const buttons = detailsContent.querySelectorAll('.case-select-btn')
+
+  buttons.forEach((button) => {
+    button.addEventListener('click', async () => {
+      const index = Number(button.dataset.index)
+      const person = people[index]
+
+      if (!person || !person.id) return
+
+      await loadPrisonerDetails(person.id)
+    })
+  })
 }
 
 //fetch full prisoner details
@@ -187,7 +298,10 @@ async function loadPrisonerDetails(id) {
   detailsContent.innerHTML = '<p>Loading prisoner details...</p>'
 
   try {
-    const response = await axios.get(`/api/prisoner/${encodeURIComponent(id)}`)
+    const response = await axios.get(
+      `/api/prisoner/${encodeURIComponent(id)}`
+    )
+
     const person = response.data
 
     //render details
@@ -261,13 +375,11 @@ function setMapLoading(isLoading) {
 }
 
 //build detail card
-function detailRow(label, value, isHtml = false) {
-  const displayValue = isHtml ? value : formatValue(value)
-
+function detailRow(label, value) {
   return `
     <div class="detail-card">
       <div class="detail-label">${escapeHtml(label)}</div>
-      <div class="detail-value">${displayValue}</div>
+      <div class="detail-value">${formatValue(value)}</div>
     </div>
   `
 }
