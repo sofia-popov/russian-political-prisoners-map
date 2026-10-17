@@ -3,6 +3,8 @@
 An interactive web application for exploring reported cases of political imprisonment in Russia through geographic visualization.
 
 **[Live Demo](https://russian-political-prisoners-map.onrender.com/)**
+
+
 <img width="830" height="409" alt="image" src="https://github.com/user-attachments/assets/d298e655-ffc9-404a-a9c5-c6ed4d0ff7e7" />
 
 
