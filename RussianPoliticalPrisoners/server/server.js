@@ -1,8 +1,8 @@
+
 const express = require('express')
-const axios = require('axios')
 const cors = require('cors')
 const path = require('path')
-require('dotenv').config()
+const fs = require('fs')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -10,66 +10,82 @@ const PORT = process.env.PORT || 3000
 app.use(cors())
 app.use(express.json())
 
-app.get('/api/map', async (req, res) => {
+// Load the local ODINT dataset
+const dataPath = path.join(
+  __dirname,
+  '..',
+  'data_imprisoned_with_coordinates.json'
+)
+
+function loadData() {
+  const raw = fs.readFileSync(dataPath, 'utf8')
+  return JSON.parse(raw).data
+}
+
+// Return map markers
+app.get('/api/map', (req, res) => {
   try {
-    const response = await axios.get(
-      'https://api.prisonerwatch.org/api/analytics/map-data?source=ovd_api_optimized',
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.API_KEY}`,
-          Accept: 'application/json'
-        },
-        responseType: 'stream',
-        timeout: 20000
-      }
-    )
+    const people = loadData()
 
-    res.setHeader(
-      'Content-Type',
-      response.headers['content-type'] || 'application/json'
-    )
+    const points = people
+      .filter(person =>
+        Number.isFinite(person.coordinates?.lat) &&
+        Number.isFinite(person.coordinates?.lng)
+      )
+      .map(person => ({
+        id: person.persecution_id,
+        name: person.name_en,
+        coordinates: person.coordinates,
+        location: person.coordinate_label ||
+          person.persecution_region_en?.[0] ||
+          'Unknown',
+        coordinate_precision: person.coordinate_precision
+      }))
 
-    response.data.pipe(res)
-
-    response.data.on('error', (err) => {
-      console.error('MAP STREAM ERROR:', err.message)
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Stream failed' })
-      } else {
-        res.end()
-      }
-    })
+    res.json({ points })
   } catch (error) {
     console.error('MAP ERROR:', error.message)
-
-    res.status(error.response?.status || 500).json({
-      error: 'Failed to fetch map data'
-    })
+    res.status(500).json({ error: 'Failed to load map data' })
   }
 })
 
-app.get('/api/prisoner/:id', async (req, res) => {
+// Return individual prisoner details
+app.get('/api/prisoner/:id', (req, res) => {
   try {
-    const response = await axios.get(
-      `https://api.prisonerwatch.org/api/prisoners/${req.params.id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.API_KEY}`
-        }
-      }
+    const people = loadData()
+
+    const person = people.find(
+      p => p.persecution_id === req.params.id
     )
 
-    res.json(response.data)
+    if (!person) {
+      return res.status(404).json({ error: 'Person not found' })
+    }
+
+    res.json({
+      name: person.name_en,
+      photo_url: person.photo?.[0],
+      gender: person.gender_en,
+      age: person.age,
+      location: person.persecution_region_en?.join(', '),
+      current_location: person.imprisonment_location_en,
+      occupation: person.persecution_occupation_en?.join(', '),
+      category: person.persecution_subject_en?.join(', '),
+      trial_status: person.persecution_case_person_state_en,
+      arrest_date: person.persecution_imprisonment_started,
+      summary: person.case_name_en,
+      sentence: person.verdict_essence_en,
+      last_updated: person.last_updated
+    })
   } catch (error) {
-    console.error('PRISONER ERROR:', error.response?.status, error.response?.data || error.message)
-    res.status(500).json({ error: 'Failed to fetch prisoner details' })
+    console.error('PRISONER ERROR:', error.message)
+    res.status(500).json({ error: 'Failed to load details' })
   }
 })
 
-//serve built frontend
+// Serve frontend
 app.use(express.static(path.join(__dirname, '..', 'dist')))
 
-//send frontend for all non-api routes
 app.get(/^(?!\/api).*/, (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'))
 })
